@@ -1,75 +1,11 @@
+import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader } from './ui/card';
 import { Badge } from './ui/badge';
 import { Award, Calendar } from 'lucide-react';
 import { Button } from './ui/button';
 import { Link } from 'react-router-dom';
-
-const doctors = [
-  {
-    id: 1,
-    name: 'Dr. Sarah Johnson',
-    specialty: 'Cardiology',
-    experience: '15 years',
-    qualifications: 'MD, FACC',
-    about: 'Specialized in preventive cardiology and heart disease management with a focus on patient education.',
-  },
-  {
-    id: 2,
-    name: 'Dr. Michael Chen',
-    specialty: 'Pediatrics',
-    experience: '12 years',
-    qualifications: 'MD, FAAP',
-    about: 'Dedicated to providing comprehensive care for children from infancy through adolescence.',
-  },
-  {
-    id: 3,
-    name: 'Dr. Emily Rodriguez',
-    specialty: 'Dermatology',
-    experience: '10 years',
-    qualifications: 'MD, FAAD',
-    about: 'Expert in medical and cosmetic dermatology with advanced training in skin cancer treatment.',
-  },
-  {
-    id: 4,
-    name: 'Dr. James Williams',
-    specialty: 'Orthopedics',
-    experience: '18 years',
-    qualifications: 'MD, FAAOS',
-    about: 'Specializes in sports medicine and minimally invasive orthopedic surgery.',
-  },
-  {
-    id: 5,
-    name: 'Dr. Lisa Anderson',
-    specialty: 'Internal Medicine',
-    experience: '14 years',
-    qualifications: 'MD, FACP',
-    about: 'Focused on adult medicine, chronic disease management, and preventive healthcare.',
-  },
-  {
-    id: 6,
-    name: 'Dr. David Kumar',
-    specialty: 'Neurology',
-    experience: '16 years',
-    qualifications: 'MD, PhD, FAAN',
-    about: 'Expert in treating neurological disorders including migraines, epilepsy, and movement disorders.',
-  },
-  {
-    id: 7,
-    name: 'Dr. Rachel Thompson',
-    specialty: 'Obstetrics & Gynecology',
-    experience: '11 years',
-    qualifications: 'MD, FACOG',
-    about: 'Provides comprehensive women\'s healthcare including prenatal care and minimally invasive surgery.',
-  },
-  {
-    id: 8,
-    name: 'Dr. Robert Martinez',
-    specialty: 'Psychiatry',
-    experience: '13 years',
-    qualifications: 'MD, FAPA',
-    about: 'Specializes in mood disorders, anxiety, and integrative mental health treatment approaches.',
-  },
-];
+import { apiService, Doctor } from '../services/api';
+import { toast } from 'sonner@2.0.3';
 
 const specialtyColors: { [key: string]: string } = {
   'Cardiology': 'bg-red-100 text-red-700',
@@ -83,6 +19,33 @@ const specialtyColors: { [key: string]: string } = {
 };
 
 export function DoctorsPage() {
+  const [doctors, setDoctors] = useState<Doctor[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchDoctors = async () => {
+      try {
+        const data = await apiService.getDoctors();
+        setDoctors(data);
+      } catch (error) {
+        console.error('Error fetching doctors:', error);
+        toast.error('Failed to load doctors. Please try again later.');
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchDoctors();
+  }, []);
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-slate-50 py-12 flex items-center justify-center">
+        <p className="text-slate-600">Loading doctors...</p>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-50 py-12">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -102,7 +65,7 @@ export function DoctorsPage() {
               <CardHeader>
                 <div className="flex items-start justify-between mb-3">
                   <div className="w-16 h-16 bg-gradient-to-br from-blue-500 to-blue-600 rounded-full flex items-center justify-center text-white text-xl">
-                    {doctor.name.split(' ')[1][0]}
+                    {doctor.name.split(' ').length > 1 ? doctor.name.split(' ')[1][0] : doctor.name[0]}
                   </div>
                   <Badge className={specialtyColors[doctor.specialty] || 'bg-slate-100 text-slate-700'}>
                     {doctor.specialty}

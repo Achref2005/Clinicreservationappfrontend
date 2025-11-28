@@ -5,77 +5,58 @@ import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Badge } from './ui/badge';
 import { Calendar, Clock, User, AlertCircle } from 'lucide-react';
-
-interface Appointment {
-  id: string;
-  patientName: string;
-  date: string;
-  time: string;
-  doctor: string;
-  specialty: string;
-  status: 'upcoming' | 'completed';
-}
-
-// Mock data - In production, this would come from a database
-const mockAppointments: Appointment[] = [
-  {
-    id: '1',
-    patientName: 'John Smith',
-    date: '2025-11-25',
-    time: '10:00 AM',
-    doctor: 'Dr. Sarah Johnson',
-    specialty: 'Cardiology',
-    status: 'upcoming',
-  },
-  {
-    id: '2',
-    patientName: 'John Smith',
-    date: '2025-12-02',
-    time: '2:30 PM',
-    doctor: 'Dr. Emily Rodriguez',
-    specialty: 'Dermatology',
-    status: 'upcoming',
-  },
-  {
-    id: '3',
-    patientName: 'John Smith',
-    date: '2025-10-15',
-    time: '11:00 AM',
-    doctor: 'Dr. Lisa Anderson',
-    specialty: 'Internal Medicine',
-    status: 'completed',
-  },
-  {
-    id: '4',
-    patientName: 'John Smith',
-    date: '2025-09-20',
-    time: '3:00 PM',
-    doctor: 'Dr. Michael Chen',
-    specialty: 'Pediatrics',
-    status: 'completed',
-  },
-];
+import { apiService, Appointment } from '../services/api';
+import { toast } from 'sonner@2.0.3';
 
 export function AppointmentsPage() {
   const [name, setName] = useState('');
-  const [age, setAge] = useState('');
+  const [phone, setPhone] = useState('');
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [searched, setSearched] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
 
-  const handleSearch = (e: React.FormEvent) => {
+  const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
+    setIsLoading(true);
     
-    // Filter appointments by name (case-insensitive)
-    const filtered = mockAppointments.filter(
-      (apt) => apt.patientName.toLowerCase().includes(name.toLowerCase())
-    );
-    
-    setAppointments(filtered);
-    setSearched(true);
+    try {
+      // Search by phone if provided, otherwise by name
+      const data = await apiService.getAppointments(phone || undefined);
+      
+      // Filter by name if provided
+      let filtered = data;
+      if (name) {
+        filtered = data.filter((apt) =>
+          apt.patient_name.toLowerCase().includes(name.toLowerCase())
+        );
+      }
+      
+      setAppointments(filtered);
+      setSearched(true);
+      
+      if (filtered.length === 0) {
+        toast.info('No appointments found for the provided information.');
+      }
+    } catch (error) {
+      console.error('Error fetching appointments:', error);
+      toast.error('Failed to fetch appointments. Please try again.');
+      setAppointments([]);
+      setSearched(true);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
-  const upcomingAppointments = appointments.filter((apt) => apt.status === 'upcoming');
-  const pastAppointments = appointments.filter((apt) => apt.status === 'completed');
+  // Determine if appointment is upcoming or past based on date
+  const now = new Date();
+  const upcomingAppointments = appointments.filter((apt) => {
+    const aptDate = new Date(apt.appointment_date);
+    return aptDate >= now;
+  });
+  const pastAppointments = appointments.filter((apt) => {
+    const aptDate = new Date(apt.appointment_date);
+    return aptDate < now;
+  });
 
   return (
     <div className="min-h-screen bg-slate-50 py-12">
@@ -111,21 +92,20 @@ export function AppointmentsPage() {
                 </div>
                 
                 <div className="space-y-2">
-                  <Label htmlFor="age">Age *</Label>
+                  <Label htmlFor="phone">Phone Number</Label>
                   <Input
-                    id="age"
-                    type="number"
-                    value={age}
-                    onChange={(e) => setAge(e.target.value)}
-                    placeholder="25"
-                    required
+                    id="phone"
+                    type="tel"
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                    placeholder="+1234567890"
                   />
                 </div>
               </div>
 
-              <Button type="submit" size="lg">
+              <Button type="submit" size="lg" disabled={isLoading}>
                 <User className="w-5 h-5 mr-2" />
-                View My Appointments
+                {isLoading ? 'Searching...' : 'View My Appointments'}
               </Button>
             </form>
           </CardContent>
@@ -142,7 +122,7 @@ export function AppointmentsPage() {
                     <div>
                       <p className="text-amber-900">No appointments found</p>
                       <p className="text-amber-700">
-                        We couldn't find any appointments for "{name}". Please check your details and try again.
+                        We couldn't find any appointments for the provided information. Please check your details and try again.
                       </p>
                     </div>
                   </div>
@@ -161,9 +141,9 @@ export function AppointmentsPage() {
                             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
                               <div className="space-y-3 flex-1">
                                 <div className="flex items-center gap-2">
-                                  <h3 className="text-slate-900">{appointment.doctor}</h3>
+                                  <h3 className="text-slate-900">{appointment.patient_name}</h3>
                                   <Badge className="bg-blue-100 text-blue-700">
-                                    {appointment.specialty}
+                                    {appointment.status || 'Scheduled'}
                                   </Badge>
                                 </div>
                                 
@@ -171,7 +151,7 @@ export function AppointmentsPage() {
                                   <div className="flex items-center gap-2">
                                     <Calendar className="w-4 h-4" />
                                     <span>
-                                      {new Date(appointment.date).toLocaleDateString('en-US', {
+                                      {new Date(appointment.appointment_date).toLocaleDateString('en-US', {
                                         weekday: 'long',
                                         year: 'numeric',
                                         month: 'long',
@@ -182,7 +162,7 @@ export function AppointmentsPage() {
                                   
                                   <div className="flex items-center gap-2">
                                     <Clock className="w-4 h-4" />
-                                    <span>{appointment.time}</span>
+                                    <span>{appointment.appointment_time}</span>
                                   </div>
                                 </div>
                               </div>
@@ -209,9 +189,9 @@ export function AppointmentsPage() {
                             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
                               <div className="space-y-3 flex-1">
                                 <div className="flex items-center gap-2">
-                                  <h3 className="text-slate-900">{appointment.doctor}</h3>
+                                  <h3 className="text-slate-900">{appointment.patient_name}</h3>
                                   <Badge variant="outline" className="text-slate-600">
-                                    {appointment.specialty}
+                                    {appointment.status || 'Completed'}
                                   </Badge>
                                   <Badge className="bg-green-100 text-green-700">
                                     Completed
@@ -222,7 +202,7 @@ export function AppointmentsPage() {
                                   <div className="flex items-center gap-2">
                                     <Calendar className="w-4 h-4" />
                                     <span>
-                                      {new Date(appointment.date).toLocaleDateString('en-US', {
+                                      {new Date(appointment.appointment_date).toLocaleDateString('en-US', {
                                         year: 'numeric',
                                         month: 'long',
                                         day: 'numeric',
@@ -232,7 +212,7 @@ export function AppointmentsPage() {
                                   
                                   <div className="flex items-center gap-2">
                                     <Clock className="w-4 h-4" />
-                                    <span>{appointment.time}</span>
+                                    <span>{appointment.appointment_time}</span>
                                   </div>
                                 </div>
                               </div>

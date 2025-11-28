@@ -4,6 +4,7 @@ import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Send, Mic, MicOff, Bot } from 'lucide-react';
 import { toast } from 'sonner@2.0.3';
+import { apiService } from '../services/api';
 
 interface Message {
   id: string;
@@ -13,16 +14,11 @@ interface Message {
 }
 
 export function BookingPage() {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: '1',
-      text: 'Hello! I\'m here to help you book an appointment at MediCare Clinic. Could you please provide your full name?',
-      sender: 'assistant',
-      timestamp: new Date(),
-    },
-  ]);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [isRecording, setIsRecording] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [sessionId, setSessionId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => {
@@ -33,40 +29,32 @@ export function BookingPage() {
     scrollToBottom();
   }, [messages]);
 
-  // Mock AI response logic
-  const getAIResponse = (userMessage: string): string => {
-    const lowerMessage = userMessage.toLowerCase();
-    
-    // Check for name patterns
-    if (messages.length === 1) {
-      return `Thank you! Now, could you please provide your phone number?`;
-    }
-    
-    // Check for phone number
-    if (messages.length === 3) {
-      return `Great! What date and time would you prefer for your appointment? For example, you can say "Tomorrow at 2 PM" or "Next Monday at 10 AM".`;
-    }
-    
-    // Check for date/time
-    if (messages.length === 5) {
-      return `Let me check the availability... Good news! That time slot is available. Would you like to confirm your appointment?`;
-    }
-    
-    // Confirmation
-    if (lowerMessage.includes('yes') || lowerMessage.includes('confirm')) {
-      return `Perfect! Your appointment has been booked. You'll receive a reminder before your appointment. Is there anything else I can help you with?`;
-    }
-    
-    if (lowerMessage.includes('no')) {
-      return `No problem! What other time would work better for you?`;
-    }
-    
-    // Default response
-    return `I understand. Could you please provide more details so I can assist you better?`;
-  };
+  // Initialize session and get welcome message
+  useEffect(() => {
+    const initializeChat = async () => {
+      try {
+        const newSessionId = await apiService.createSession();
+        setSessionId(newSessionId);
+        
+        // Add welcome message
+        const welcomeMessage: Message = {
+          id: '1',
+          text: 'Hello! I\'m here to help you. How can I assist you today?',
+          sender: 'assistant',
+          timestamp: new Date(),
+        };
+        setMessages([welcomeMessage]);
+      } catch (error) {
+        console.error('Error initializing chat:', error);
+        toast.error('Failed to initialize chat. Please refresh the page.');
+      }
+    };
 
-  const handleSendMessage = () => {
-    if (!inputValue.trim()) return;
+    initializeChat();
+  }, []);
+
+  const handleSendMessage = async () => {
+    if (!inputValue.trim() || isLoading) return;
 
     const userMessage: Message = {
       id: Date.now().toString(),
@@ -76,18 +64,44 @@ export function BookingPage() {
     };
 
     setMessages((prev) => [...prev, userMessage]);
+    const currentInput = inputValue;
     setInputValue('');
+    setIsLoading(true);
 
-    // Simulate AI response
-    setTimeout(() => {
+    try {
+      const response = await apiService.sendChatMessage(currentInput);
+      
       const aiResponse: Message = {
         id: (Date.now() + 1).toString(),
-        text: getAIResponse(inputValue),
+        text: response.message,
         sender: 'assistant',
         timestamp: new Date(),
       };
+      
+      if (response.session_id) {
+        setSessionId(response.session_id);
+      }
+      
       setMessages((prev) => [...prev, aiResponse]);
-    }, 1000);
+      
+      // Show success toast if appointment was booked
+      if (response.appointment_data) {
+        toast.success('Appointment booked successfully!');
+      }
+    } catch (error) {
+      console.error('Error sending message:', error);
+      toast.error('Failed to send message. Please try again.');
+      
+      const errorResponse: Message = {
+        id: (Date.now() + 2).toString(),
+        text: 'I apologize, but I encountered an error. Please try again.',
+        sender: 'assistant',
+        timestamp: new Date(),
+      };
+      setMessages((prev) => [...prev, errorResponse]);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -202,7 +216,7 @@ export function BookingPage() {
                 <Button
                   type="button"
                   onClick={handleSendMessage}
-                  disabled={!inputValue.trim() || isRecording}
+                  disabled={!inputValue.trim() || isRecording || isLoading}
                   size="icon"
                 >
                   <Send className="w-5 h-5" />
