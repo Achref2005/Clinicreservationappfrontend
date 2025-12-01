@@ -1,6 +1,6 @@
-"""
+'''
 AI Agent service using Groq (LLaMA) and MCP for natural conversation.
-"""
+'''
 import asyncio
 from typing import Dict, Optional, List
 import uuid
@@ -16,7 +16,7 @@ from app.services.mcp_client import MCPClient
 
 
 class AIAgent:
-    """AI Agent for handling patient conversations."""
+    '''AI Agent for handling patient conversations.'''
 
     def __init__(self):
         if settings.GROQ_API_KEY:
@@ -43,13 +43,14 @@ class AIAgent:
 
         # Load doctors list for system prompt
         from app.routers.doctors import DOCTORS_DATA
+        self.doctors_data = DOCTORS_DATA
         doctors_list = "\n".join([
             f"- {doc['name']} ({doc['specialty']}) - {doc['qualifications']}"
-            for doc in DOCTORS_DATA
+            for doc in self.doctors_data
         ])
 
         # System prompt for the AI agent
-        self.system_prompt = f"""You are a friendly and professional booking assistant for {settings.CLINIC_NAME}. 
+        self.system_prompt = f'''You are a friendly and professional booking assistant for {settings.CLINIC_NAME}. 
 Your role is to help patients with any questions or requests through natural conversation.
 
 IMPORTANT - Available Doctors at our clinic:
@@ -76,14 +77,14 @@ Guidelines:
 Clinic hours: {settings.CLINIC_HOURS_START} to {settings.CLINIC_HOURS_END}
 Appointment duration: {settings.APPOINTMENT_DURATION_MINUTES} minutes
 
-Always be helpful, conversational, and make the experience smooth for the patient. Respond naturally to whatever they say."""
+Always be helpful, conversational, and make the experience smooth for the patient. Respond naturally to whatever they say.'''
 
     def get_current_time(self) -> datetime:
-        """Get current time"""
+        '''Get current time'''
         return datetime.now()
 
     def _extract_name(self, message: str) -> Optional[str]:
-        """Extract name from message"""
+        '''Extract name from message'''
         # Simple pattern matching - can be enhanced with NLP
         patterns = [
             r"my name is ([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)",
@@ -100,7 +101,7 @@ Always be helpful, conversational, and make the experience smooth for the patien
         return None
 
     def _extract_phone(self, message: str) -> Optional[str]:
-        """Extract phone number from message"""
+        '''Extract phone number from message'''
         # Remove common characters and find digits
         digits = re.sub(r'[^\d]', '', message)
         if len(digits) >= 10:
@@ -108,7 +109,7 @@ Always be helpful, conversational, and make the experience smooth for the patien
         return None
 
     def _extract_datetime(self, message: str) -> Optional[Dict]:
-        """Extract date and time from message"""
+        '''Extract date and time from message'''
         # This is a simplified version - in production, use a proper NLP library
         message_lower = message.lower()
         
@@ -173,19 +174,35 @@ Always be helpful, conversational, and make the experience smooth for the patien
             return {"date": date, "time": time}
         return None
 
+    def _extract_doctor(self, message: str) -> Optional[Dict]:
+        '''Extract doctor name or specialty from message and return doctor data.'''
+        message_lower = message.lower()
+        
+        for doctor in self.doctors_data:
+            # Check for doctor name (case-insensitive, partial match for Arabic names)
+            if doctor["name"].lower() in message_lower:
+                return doctor
+            # Check for specialty
+            if doctor["specialty"].lower() in message_lower:
+                return doctor
+        
+        return None
+
     async def process_message(self, user_message: str, session_id: str = None) -> Dict:
-        """Process user message and generate AI response"""
+        '''Process user message and generate AI response'''
         if not session_id:
             session_id = str(uuid.uuid4())
         
         # Initialize or get session
         if session_id not in self.sessions:
             self.sessions[session_id] = {
-                "state": "collecting_name",
+                "state": "collecting_doctor", # Start by collecting doctor/specialty
                 "patient_name": None,
                 "patient_phone": None,
                 "requested_date": None,
                 "requested_time": None,
+                "requested_doctor_id": None,
+                "requested_doctor_name": None,
                 "conversation_history": []
             }
         
@@ -200,7 +217,15 @@ Always be helpful, conversational, and make the experience smooth for the patien
         state_based_response = None
         booking_action = None
         
-        if session["state"] == "collecting_name":
+        if session["state"] == "collecting_doctor":
+            doctor = self._extract_doctor(user_message)
+            if doctor:
+                session["requested_doctor_id"] = doctor["id"]
+                session["requested_doctor_name"] = doctor["name"]
+                session["state"] = "collecting_name"
+                # Don't override LLM response, just update state
+        
+        elif session["state"] == "collecting_name":
             name = self._extract_name(user_message)
             if name:
                 session["patient_name"] = name
@@ -224,18 +249,20 @@ Always be helpful, conversational, and make the experience smooth for the patien
                 # Check availability
                 is_available = await self.calendar_service.check_availability(
                     session["requested_date"],
-                    session["requested_time"]
+                    session["requested_time"],
+                    session["requested_doctor_id"]
                 )
                 
                 if is_available:
                     session["state"] = "confirming"
                     # Store availability info for LLM context
-                    state_based_response = f"Perfect! I have {session['requested_date'].strftime('%A, %B %d')} at {session['requested_time']} available. Would you like to confirm this appointment?"
+                    state_based_response = f"Perfect! I have {session['requested_date'].strftime('%A, %B %d')} at {session['requested_time']} available with {session['requested_doctor_name']}. Would you like to confirm this appointment?"
                 else:
                     # Find alternative times
                     alternatives = await self.calendar_service.find_alternatives(
                         session["requested_date"],
-                        session["requested_time"]
+                        session["requested_time"],
+                        session["requested_doctor_id"]
                     )
 
                     if alternatives:
@@ -254,7 +281,7 @@ Always be helpful, conversational, and make the experience smooth for the patien
 
                         alt_text = ", ".join(alt_texts) if alt_texts else None
                         if alt_text:
-                            state_based_response = f"I'm sorry, but that time slot is not available. However, I have these alternative times: {alt_text}. Would any of these work for you?"
+                            state_based_response = f"I'm sorry, but that time slot is not available with {session['requested_doctor_name']}. However, I have these alternative times: {alt_text}. Would any of these work for you?"
         
         elif session["state"] == "confirming":
             if any(word in user_message.lower() for word in ["yes", "confirm", "ok", "sure", "that works"]):
@@ -263,113 +290,67 @@ Always be helpful, conversational, and make the experience smooth for the patien
                     patient_name=session["patient_name"],
                     patient_phone=session["patient_phone"],
                     appointment_date=session["requested_date"],
-                    appointment_time=session["requested_time"]
+                    appointment_time=session["requested_time"],
+                    doctor_id=session["requested_doctor_id"],
+                    doctor_name=session["requested_doctor_name"]
                 )
                 
                 if appointment:
                     session["state"] = "completed"
-                    response = f"Excellent! Your appointment has been confirmed for {session['requested_date'].strftime('%A, %B %d')} at {session['requested_time']}. You'll receive a reminder message before your appointment. Is there anything else I can help you with?"
-                    
-                    return {
-                        "message": response,
-                        "session_id": session_id,
-                        "appointment_data": {
-                            "id": appointment["id"],
-                            "date": appointment["appointment_date"] if isinstance(appointment["appointment_date"], str) else appointment["appointment_date"].isoformat(),
-                            "time": appointment["appointment_time"]
-                        }
-                    }
+                    booking_action = "booked"
+                    state_based_response = f"Excellent! Your appointment with {session['requested_doctor_name']} is confirmed for {session['requested_date'].strftime('%A, %B %d')} at {session['requested_time']}. You'll receive a confirmation message shortly. Is there anything else I can help you with?"
                 else:
-                    state_based_response = "I apologize, but there was an issue booking your appointment. Please try again or contact us directly."
-            elif any(word in user_message.lower() for word in ["no", "cancel", "change"]):
-                session["state"] = "collecting_datetime"
-        
-        # Always try to use LLM for natural responses FIRST
-        response = None
-        if self.groq_client:
-            try:
-                llm_response = await self._generate_natural_response(session, user_message)
-                if llm_response and llm_response.strip():
-                    response = llm_response.strip()
-                    print(f"✅ LLM response generated: {response[:50]}...")
-                else:
-                    print("⚠️ LLM returned empty response")
-            except Exception as e:
-                print(f"❌ Error generating LLM response: {e}")
-                import traceback
-                traceback.print_exc()
-        
-        # If LLM didn't respond, use state-based response if available
-        if not response:
-            if state_based_response:
-                response = state_based_response
-                print(f"📝 Using state-based response: {response[:50]}...")
+                    session["state"] = "failed"
+                    state_based_response = "I'm sorry, there was an error booking your appointment. Please try again later."
             else:
-                # Only use default if we have no other response
-                if not self.groq_client:
-                    response = "I'm here to help! However, I need a Groq API key to provide intelligent responses. Please configure GROQ_API_KEY in your .env file. How can I assist you with booking an appointment?"
-                else:
-                    # If LLM failed, provide a more helpful default
-                    response = "I'm here to help! How can I assist you today?"
-                print(f"⚠️ Using default response (no LLM or state response)")
-        
-        session["conversation_history"].append({"role": "assistant", "content": response})
-        
+                session["state"] = "collecting_datetime" # Go back to collecting new time
+                state_based_response = "No problem. What other time would you like to book?"
+
+        # Use Groq for conversational responses
+        ai_response = await self._get_groq_response(session, state_based_response)
+
+        # Append AI response to history
+        session["conversation_history"].append({
+            "role": "assistant",
+            "content": ai_response
+        })
+
         return {
-            "message": response,
+            "response": ai_response,
             "session_id": session_id,
-            "appointment_data": None
+            "state": session["state"],
+            "booking_action": booking_action
         }
 
-    async def _generate_natural_response(self, session: Dict, user_message: str) -> Optional[str]:
-        """Generate a natural-sounding response using Groq / LLaMA."""
+    async def _get_groq_response(self, session: Dict, state_based_response: Optional[str]) -> str:
+        '''Get response from Groq LLM'''
         if not self.groq_client:
-            return None
+            return state_based_response or "I'm sorry, the AI service is currently unavailable. Please try again later."
 
-        # Add current booking state to system prompt if in booking flow
-        system_prompt = self.system_prompt
-        if session.get("state") != "collecting_name" and session.get("patient_name"):
-            state_info = f"\n\nCurrent booking context: Patient name: {session.get('patient_name')}"
-            if session.get("patient_phone"):
-                state_info += f", Phone: {session.get('patient_phone')}"
-            if session.get("requested_date"):
-                state_info += f", Requested date/time: {session.get('requested_date')} at {session.get('requested_time')}"
-            system_prompt += state_info
-
-        messages: List[Dict[str, str]] = [
-            {"role": "system", "content": system_prompt},
+        # Create a message list for the LLM
+        messages = [
+            {"role": "system", "content": self.system_prompt},
+            *session["conversation_history"]
         ]
 
-        # Include conversation history for better context
-        # Skip the last message since we're adding it separately
-        history = session["conversation_history"][:-1] if session["conversation_history"] else []
-        for msg in history[-10:]:  # Last 10 messages for context
-            if msg.get("role") and msg.get("content"):
-                messages.append({"role": msg["role"], "content": msg["content"]})
-
-        # Add current user message
-        messages.append({"role": "user", "content": user_message})
-        
-        print(f"📤 Sending {len(messages)} messages to Groq LLM")
-
-        def _invoke():
-            return self.groq_client.chat.completions.create(
-                model=self.groq_model,
-                temperature=self.temperature,
-                messages=messages,
-            )
+        # Add state-based response as a system message to guide the LLM
+        if state_based_response:
+            messages.append({
+                "role": "system",
+                "content": f"IMPORTANT: Use the following information to respond to the user: {state_based_response}"
+            })
 
         try:
-            completion = await asyncio.to_thread(_invoke)
-            if completion and completion.choices:
-                content = completion.choices[0].message.content
-                if content:
-                    return content.strip()
-            else:
-                print("⚠️ Groq API returned empty completion")
-        except Exception as exc:  # pylint: disable=broad-except
-            print(f"❌ Error calling Groq LLM: {exc}")
-            import traceback
-            traceback.print_exc()
-        return None
-
+            chat_completion = self.groq_client.chat.completions.create(
+                messages=messages,
+                model=self.groq_model,
+                temperature=self.temperature,
+                max_tokens=1024,
+                top_p=1,
+                stop=None,
+                stream=False,
+            )
+            return chat_completion.choices[0].message.content
+        except Exception as e:
+            print(f"❌ Groq API error: {e}")
+            return state_based_response or "I'm sorry, I encountered an error. Please try again."

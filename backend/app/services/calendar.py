@@ -46,8 +46,8 @@ class CalendarService:
     # ------------------------------------------------------------------ #
     # Public API
     # ------------------------------------------------------------------ #
-    async def check_availability(self, date: datetime, time: str) -> bool:
-        """Check if a specific date and time slot is available."""
+    async def check_availability(self, date: datetime, time: str, doctor_id: int) -> bool:
+        """Check if a specific date and time slot is available for a given doctor."""
         hour, minute = map(int, time.split(":"))
         appointment_datetime = date.replace(
             hour=hour, minute=minute, second=0, microsecond=0
@@ -59,7 +59,7 @@ class CalendarService:
         # Check Google Calendar first when available
         if self.google_enabled:
             google_available = await self.google_calendar.check_availability(
-                appointment_datetime, settings.APPOINTMENT_DURATION_MINUTES
+                appointment_datetime, settings.APPOINTMENT_DURATION_MINUTES, doctor_id
             )
             if not google_available:
                 return False
@@ -70,13 +70,14 @@ class CalendarService:
             {
                 "date": appointment_datetime.isoformat(),
                 "time": time,
+                "doctor_id": doctor_id,
             },
         )
 
         return bool(result.get("result", {}).get("available", True))
 
-    async def find_alternatives(self, date: datetime, time: str) -> List[Dict]:
-        """Find alternative available time slots."""
+    async def find_alternatives(self, date: datetime, time: str, doctor_id: int) -> List[Dict]:
+        """Find alternative available time slots for a given doctor."""
         hour, minute = map(int, time.split(":"))
         requested_dt = date.replace(hour=hour, minute=minute, second=0, microsecond=0)
 
@@ -84,6 +85,7 @@ class CalendarService:
             return await self.google_calendar.find_alternatives(
                 requested_dt,
                 settings.APPOINTMENT_DURATION_MINUTES,
+                doctor_id,
             )
 
         # Fallback to MCP-powered suggestions
@@ -105,9 +107,11 @@ class CalendarService:
         patient_phone: str,
         appointment_date: datetime,
         appointment_time: str,
+        doctor_id: int,
+        doctor_name: str,
     ) -> Optional[Dict]:
         """Book an appointment in Google Calendar and store metadata in MCP."""
-        if not await self.check_availability(appointment_date, appointment_time):
+        if not await self.check_availability(appointment_date, appointment_time, doctor_id):
             return None
 
         hour, minute = map(int, appointment_time.split(":"))
@@ -124,6 +128,7 @@ class CalendarService:
                     patient_phone=patient_phone,
                     start=appointment_datetime,
                     duration_minutes=settings.APPOINTMENT_DURATION_MINUTES,
+                    doctor_name=doctor_name,
                 )
                 print(f"✅ Google Calendar event created successfully")
             except Exception as e:
@@ -137,6 +142,8 @@ class CalendarService:
             "patient_phone": patient_phone,
             "appointment_datetime": appointment_datetime.isoformat(),
             "appointment_time": appointment_time,
+            "doctor_id": doctor_id,
+            "doctor_name": doctor_name,
             "google_event_id": google_event.get("id") if google_event else None,
             "google_event_link": google_event.get("htmlLink") if google_event else None,
         }
